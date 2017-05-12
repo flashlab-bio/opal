@@ -12,7 +12,7 @@
 
 using namespace std;
 
-bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength, vector< vector<unsigned char> >* seqs);
+bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength, vector< vector<unsigned char> >* seqs, vector<string>* ids);
 void printAlignment(const unsigned char* query, const int queryLength,
                     const unsigned char* target, const int targetLength,
                     const OpalSearchResult result, const unsigned char* alphabet);
@@ -102,8 +102,9 @@ int main(int argc, char * const argv[]) {
         return 1;
     }
     vector< vector<unsigned char> >* querySequences = new vector< vector<unsigned char> >();
+    vector<string>* queryID = new vector<string>();
     printf("Reading query fasta file...\n");
-    readFastaSequences(queryFile, alphabet, alphabetLength, querySequences);
+    readFastaSequences(queryFile, alphabet, alphabetLength, querySequences, queryID);
     unsigned char* query = (*querySequences)[0].data();
     int queryLength = (*querySequences)[0].size();
     printf("Read query sequence, %d residues.\n", queryLength);
@@ -124,10 +125,11 @@ int main(int argc, char * const argv[]) {
     int dbTotalLength = 0;  // Number of sequences in the database.
     while (!wholeDbRead) {
         vector< vector<unsigned char> >* dbSequences = new vector< vector<unsigned char> >();
+        vector<string>* dbID = new vector<string>();
         printf("\nReading database fasta file...\n");
         // Chunk of database is read and processed (if database is not huge, there will be only one chunk).
         // We do this because if database is huge, it may not fit into memory.
-        wholeDbRead = readFastaSequences(dbFile, alphabet, alphabetLength, dbSequences);
+        wholeDbRead = readFastaSequences(dbFile, alphabet, alphabetLength, dbSequences, dbID);
         int dbLength = dbSequences->size();
         unsigned char** db = new unsigned char*[dbLength];
         int* dbSeqLengths = new int[dbLength];
@@ -169,7 +171,7 @@ int main(int argc, char * const argv[]) {
         if (!silent) {
             printf("\n#<i>: <score> (<query start>, <target start>) (<query end>, <target end>)\n");
             for (int i = 0; i < dbLength; i++) {
-                printf("#%d: %d", dbTotalLength - dbLength + i, results[i]->score);
+                printf("#%s: %d", (*dbID)[dbTotalLength - dbLength + i].c_str(), results[i]->score);
                 if (results[i]->startLocationQuery >= 0) {
                     printf(" (%d, %d)", results[i]->startLocationQuery, results[i]->startLocationTarget);
                 } else {
@@ -200,9 +202,9 @@ int main(int argc, char * const argv[]) {
         delete dbSequences;
     }
 
-    printf("\nCpu time of searching: %.2lf\n", cpuTime);
+    printf("\nCpu time of searching: %.5lf\n", cpuTime);
     if (searchType != OPAL_SEARCH_ALIGNMENT) {
-        printf("GCUPS (giga cell updates per second): %.2lf\n",
+        printf("GCUPS (giga cell updates per second): %.5lf\n",
                dbTotalNumResidues / 1000000000.0 * queryLength / cpuTime);
     }
 
@@ -244,8 +246,9 @@ int main(int argc, char * const argv[]) {
  * @param [out] seqs Sequences will be stored here, each sequence as vector of indexes from alphabet.
  * @return true if reached end of file, otherwise false.
  */
-bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength, vector< vector<unsigned char> >* seqs) {
+bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength, vector< vector<unsigned char> >* seqs, vector<string>* ids) {
     seqs->clear();
+    ids->clear();
 
     unsigned char letterIdx[128]; //!< letterIdx[c] is index of letter c in alphabet
     for (int i = 0; i < alphabetLength; i++)
@@ -262,13 +265,19 @@ bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength
     bool inSequence = false;
     int buffSize = 4096;
     unsigned char buffer[buffSize];
+    string buffID;
     while (!feof(file)) {
         int read = fread(buffer, sizeof(char), buffSize, file);
         for (int i = 0; i < read; ++i) {
             unsigned char c = buffer[i];
             if (inHeader) { // I do nothing if in header
-                if (c == '\n')
+                if (c == '\n') {
                     inHeader = false;
+                    ids->push_back(buffID);
+                    buffID.clear();
+                } else {
+                    buffID += c;
+                }
             } else {
                 if (c == '>') {
                     inHeader = true;
@@ -295,6 +304,9 @@ bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength
                 }
             }
         }
+    }
+    if (ids->empty()) {
+        ids->push_back("solo");
     }
 
     return true;
