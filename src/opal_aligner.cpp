@@ -109,9 +109,13 @@ int main(int argc, char * const argv[]) {
     vector<string>* queryID = new vector<string>();
     printf("Reading query fasta file...\n");
     readFastaSequences(queryFile, alphabet, alphabetLength, querySequences, queryID);
-    unsigned char* query = (*querySequences)[0].data();
-    int queryLength = (*querySequences)[0].size();
-    printf("Read query sequence, %d residues.\n", queryLength);
+    int qLength = queryID->size();
+    if (qLength > 1) { maxRes = 1; }
+    unsigned char* query;
+    int queryLength = 0;
+    //unsigned char* query = (*querySequences)[0].data();
+    //int queryLength = (*querySequences)[0].size();
+    //printf("Read query sequence, %d residues.\n", queryLength);
     fclose(queryFile);
 
 
@@ -153,51 +157,52 @@ int main(int argc, char * const argv[]) {
         }
 
         // ----------------------------- MAIN CALCULATION ----------------------------- //
-        OpalSearchResult** results = new OpalSearchResult*[dbLength];
-        for (int i = 0; i < dbLength; i++) {
-            results[i] = new OpalSearchResult;
-            opalInitSearchResult(results[i]);
-        }
-        printf("\nComparing query to database...");
-        fflush(stdout);
         clock_t start = clock();
-        int resultCode = opalSearchDatabase(query, queryLength, db, dbLength, dbSeqLengths,
-                                             gapOpen, gapExt, scoreMatrix.getMatrix(), alphabetLength,
-                                             results, searchType, modeCode, OPAL_OVERFLOW_BUCKETS);
-        if (resultCode) {
-            printf("\nDatabase search failed with error code: %d\n", resultCode);
-        }
-        clock_t finish = clock();
-        cpuTime += ((double)(finish-start))/CLOCKS_PER_SEC;
-        // Sorting results
+        OpalSearchResult** results = new OpalSearchResult*[dbLength];
+        int resultCode;
         vector<int> idx(dbLength);
         iota(begin(idx), end(idx), 0);
-        sort(begin(idx), end(idx), [&](int i1, int i2) { return results[i1]->score > results[i2]->score; });
-        // ---------------------------------------------------------------------------- //
-        printf("\nFinished!\n");
+        for (int j = 0; j < qLength; ++j) {
+        	queryLength = (*querySequences)[j].size();
+        	query = (*querySequences)[j].data();
+        	for (int i = 0; i < dbLength; i++) {
+        	    results[i] = new OpalSearchResult;
+        	    opalInitSearchResult(results[i]);
+        	}
+        	printf("\nComparing query to database...");
+        	//fflush(stdout);
+        	resultCode = opalSearchDatabase(query, queryLength, db, dbLength, dbSeqLengths,
+        	                                     gapOpen, gapExt, scoreMatrix.getMatrix(), alphabetLength,
+        	                                     results, searchType, modeCode, OPAL_OVERFLOW_BUCKETS);
+        	if (resultCode) {
+        	    printf("\nDatabase search failed with error code: %d\n", resultCode);
+        	    continue;
+        	}
+        	// Sorting results
+        	sort(begin(idx), end(idx), [&](int i1, int i2) { return results[i1]->score > results[i2]->score; });
+        	// ---------------------------------------------------------------------------- //
 
-        if (!silent) {
-            printf("\n#<i>: <score> (<query start>, <target start>) (<query end>, <target end>)\n");
-            for (int i = 0; i < min(dbLength, maxRes); i++) {
-                printf("#%s: %d", (*dbID)[idx[dbTotalLength - dbLength + i]].c_str(), results[idx[i]]->score);
-                if (results[idx[i]]->startLocationQuery >= 0) {
-                    printf(" (%d, %d)", results[idx[i]]->startLocationQuery, results[idx[i]]->startLocationTarget);
-                } else {
-                    printf(" (?, ?)");
-                }
-                if (results[idx[i]]->endLocationQuery >= 0) {
-                    printf(" (%d, %d)", results[idx[i]]->endLocationQuery, results[idx[i]]->endLocationTarget);
-                } else {
-                    printf(" (?, ?)");
-                }
-                printf("\n");
-
-                if (results[idx[i]]->alignment) {
-                    printAlignment(query, queryLength, db[idx[i]], dbSeqLengths[idx[i]], *results[idx[i]], alphabet);
-                }
-            }
+        	if (!silent) {
+        	    printf("\n#<i>: <score> (<query start>, <target start>) (<query end>, <target end>)\n");
+        	    for (int i = 0; i < min(dbLength, maxRes); i++) {
+        	        printf("%s-%s: %d", (*queryID)[j].c_str(), (*dbID)[idx[dbTotalLength - dbLength + i]].c_str(), results[idx[i]]->score);
+        	        if (results[idx[i]]->startLocationQuery >= 0) {
+        	            printf(" (%d, %d)", results[idx[i]]->startLocationQuery, results[idx[i]]->startLocationTarget);
+        	        } else {
+        	            printf(" (?, ?)");
+        	        }
+        	        if (results[idx[i]]->endLocationQuery >= 0) {
+        	            printf(" (%d, %d)", results[idx[i]]->endLocationQuery, results[idx[i]]->endLocationTarget);
+        	        } else {
+        	            printf(" (?, ?)");
+        	        }
+        	        printf("\n");
+        	        if (results[idx[i]]->alignment) {
+        	            printAlignment(query, queryLength, db[idx[i]], dbSeqLengths[idx[i]], *results[idx[i]], alphabet);
+        	        }
+        	    }
+        	}
         }
-
         for (int i = 0; i < dbLength; i++) {
             if (results[i]->alignment) {
                 free(results[i]->alignment);
@@ -208,6 +213,10 @@ int main(int argc, char * const argv[]) {
         delete[] db;
         delete[] dbSeqLengths;
         delete dbSequences;
+    	
+    	clock_t finish = clock();
+        cpuTime += ((double)(finish-start))/CLOCKS_PER_SEC;
+    	printf("\nFinished!\n");
     }
 
     printf("\nCpu time of searching: %.5lf\n", cpuTime);
