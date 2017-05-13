@@ -6,7 +6,8 @@
 #include <ctime>
 #include <string>
 #include <climits>
-
+#include <numeric>
+#include <algorithm>
 #include "opal.h"
 #include "ScoreMatrix.hpp"
 
@@ -20,6 +21,7 @@ void printAlignment(const unsigned char* query, const int queryLength,
 int main(int argc, char * const argv[]) {
     int gapOpen = 3;
     int gapExt = 1;
+    int maxRes = 2;
     ScoreMatrix scoreMatrix;
 
     //----------------------------- PARSE COMMAND LINE ------------------------//
@@ -30,11 +32,12 @@ int main(int argc, char * const argv[]) {
     char mode[16] = "SW";
     int searchType = OPAL_SEARCH_SCORE;
     int option;
-    while ((option = getopt(argc, argv, "a:o:e:m:f:x:s")) >= 0) {
+    while ((option = getopt(argc, argv, "a:o:e:m:n:f:x:s")) >= 0) {
         switch (option) {
         case 'a': strcpy(mode, optarg); break;
         case 'o': gapOpen = atoi(optarg); break;
         case 'e': gapExt = atoi(optarg); break;
+        case 'n': maxRes = atoi(optarg); break;
         case 'm': scoreMatrixName = string(optarg); break;
         case 'f': scoreMatrixFileGiven = true; strcpy(scoreMatrixFilepath, optarg); break;
         case 's': silent = true; break;
@@ -48,6 +51,7 @@ int main(int argc, char * const argv[]) {
         fprintf(stderr, "  -g N  N is gap opening penalty. [default: 3]\n");
         fprintf(stderr, "  -e N  N is gap extension penalty. [default: 1]\n"
                         "    Gap of length n will have penalty of g + (n - 1) * e.\n");
+        fprintf(stderr, "  -n N  N is max number of result entries\n");
         fprintf(stderr, "  -m Blosum50  Score matrix to be used. [default: Blosum50]\n");
         fprintf(stderr, "  -f FILE  FILE contains score matrix and some additional data. Overrides -m.\n");
         fprintf(stderr, "  -s  If set, there will be no score output (silent mode).\n");
@@ -123,14 +127,14 @@ int main(int argc, char * const argv[]) {
     bool wholeDbRead = false;
     int dbTotalNumResidues = 0;  // Sum of lengths of all database sequences.
     int dbTotalLength = 0;  // Number of sequences in the database.
+    vector<string>* dbID = new vector<string>(); // 
     while (!wholeDbRead) {
         vector< vector<unsigned char> >* dbSequences = new vector< vector<unsigned char> >();
-        vector<string>* dbID = new vector<string>();
         printf("\nReading database fasta file...\n");
         // Chunk of database is read and processed (if database is not huge, there will be only one chunk).
         // We do this because if database is huge, it may not fit into memory.
         wholeDbRead = readFastaSequences(dbFile, alphabet, alphabetLength, dbSequences, dbID);
-        int dbLength = dbSequences->size();
+        int dbLength = dbID->size();
         unsigned char** db = new unsigned char*[dbLength];
         int* dbSeqLengths = new int[dbLength];
         int dbNumResidues = 0;
@@ -165,27 +169,31 @@ int main(int argc, char * const argv[]) {
         }
         clock_t finish = clock();
         cpuTime += ((double)(finish-start))/CLOCKS_PER_SEC;
+        // Sorting results
+        vector<int> idx(dbLength);
+        iota(begin(idx), end(idx), 0);
+        sort(begin(idx), end(idx), [&](int i1, int i2) { return results[i1]->score > results[i2]->score; });
         // ---------------------------------------------------------------------------- //
         printf("\nFinished!\n");
 
         if (!silent) {
             printf("\n#<i>: <score> (<query start>, <target start>) (<query end>, <target end>)\n");
-            for (int i = 0; i < dbLength; i++) {
-                printf("#%s: %d", (*dbID)[dbTotalLength - dbLength + i].c_str(), results[i]->score);
-                if (results[i]->startLocationQuery >= 0) {
-                    printf(" (%d, %d)", results[i]->startLocationQuery, results[i]->startLocationTarget);
+            for (int i = 0; i < min(dbLength, maxRes); i++) {
+                printf("#%s: %d", (*dbID)[idx[dbTotalLength - dbLength + i]].c_str(), results[idx[i]]->score);
+                if (results[idx[i]]->startLocationQuery >= 0) {
+                    printf(" (%d, %d)", results[idx[i]]->startLocationQuery, results[idx[i]]->startLocationTarget);
                 } else {
                     printf(" (?, ?)");
                 }
-                if (results[i]->endLocationQuery >= 0) {
-                    printf(" (%d, %d)", results[i]->endLocationQuery, results[i]->endLocationTarget);
+                if (results[idx[i]]->endLocationQuery >= 0) {
+                    printf(" (%d, %d)", results[idx[i]]->endLocationQuery, results[idx[i]]->endLocationTarget);
                 } else {
                     printf(" (?, ?)");
                 }
                 printf("\n");
 
-                if (results[i]->alignment) {
-                    printAlignment(query, queryLength, db[i], dbSeqLengths[i], *results[i], alphabet);
+                if (results[idx[i]]->alignment) {
+                    printAlignment(query, queryLength, db[idx[i]], dbSeqLengths[idx[i]], *results[idx[i]], alphabet);
                 }
             }
         }
@@ -248,7 +256,6 @@ int main(int argc, char * const argv[]) {
  */
 bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength, vector< vector<unsigned char> >* seqs, vector<string>* ids) {
     seqs->clear();
-    ids->clear();
 
     unsigned char letterIdx[128]; //!< letterIdx[c] is index of letter c in alphabet
     for (int i = 0; i < alphabetLength; i++)
