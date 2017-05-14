@@ -13,7 +13,7 @@
 
 using namespace std;
 
-bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength, vector< vector<unsigned char> >* seqs, vector<string>* ids);
+bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength, vector< vector<unsigned char> >* seqs, vector<string>* ids, bool rc);
 void printAlignment(const unsigned char* query, const int queryLength,
                     const unsigned char* target, const int targetLength,
                     const OpalSearchResult result, const unsigned char* alphabet);
@@ -29,10 +29,11 @@ int main(int argc, char * const argv[]) {
     bool scoreMatrixFileGiven = false;
     char scoreMatrixFilepath[512];
     bool silent = false;
+    bool revcomp = false;
     char mode[16] = "SW";
     int searchType = OPAL_SEARCH_SCORE;
     int option;
-    while ((option = getopt(argc, argv, "a:o:e:m:n:f:x:s")) >= 0) {
+    while ((option = getopt(argc, argv, "a:o:e:m:n:f:x:s:r")) >= 0) {
         switch (option) {
         case 'a': strcpy(mode, optarg); break;
         case 'o': gapOpen = atoi(optarg); break;
@@ -41,6 +42,7 @@ int main(int argc, char * const argv[]) {
         case 'm': scoreMatrixName = string(optarg); break;
         case 'f': scoreMatrixFileGiven = true; strcpy(scoreMatrixFilepath, optarg); break;
         case 's': silent = true; break;
+        case 'r': revcomp = true; break;
         case 'x': searchType = atoi(optarg); break;
         }
     }
@@ -48,16 +50,17 @@ int main(int argc, char * const argv[]) {
         fprintf(stderr, "\n");
         fprintf(stderr, "Usage: opal_aligner [options...] <query.fasta> <db.fasta>\n");
         fprintf(stderr, "Options:\n");
-        fprintf(stderr, "  -g N  N is gap opening penalty. [default: 3]\n");
-        fprintf(stderr, "  -e N  N is gap extension penalty. [default: 1]\n"
+        fprintf(stderr, "  -g N	N is gap opening penalty. [default: 3]\n");
+        fprintf(stderr, "  -e N	N is gap extension penalty. [default: 1]\n"
                         "    Gap of length n will have penalty of g + (n - 1) * e.\n");
-        fprintf(stderr, "  -n N  N is max number of result entries\n");
-        fprintf(stderr, "  -m Blosum50  Score matrix to be used. [default: Blosum50]\n");
-        fprintf(stderr, "  -f FILE  FILE contains score matrix and some additional data. Overrides -m.\n");
-        fprintf(stderr, "  -s  If set, there will be no score output (silent mode).\n");
-        fprintf(stderr, "  -a SW|NW|HW|OV  Alignment mode that will be used. [default: SW]\n");
+        fprintf(stderr, "  -n N	N is max number of result entries\n");
+        fprintf(stderr, "  -m	Blosum50  Score matrix to be used. [default: Blosum50]\n");
+        fprintf(stderr, "  -f FILE	FILE contains score matrix and some additional data. Overrides -m.\n");
+        fprintf(stderr, "  -s	If set, there will be no score output (silent mode).\n");
+        fprintf(stderr, "  -r	If set, consider reverse-complement of query(s)\n");
+        fprintf(stderr, "  -a	SW|NW|HW|OV  Alignment mode that will be used. [default: SW]\n");
         fprintf(stderr,
-                "  -x search_level  Following search levels are available [default: %d]:\n"
+                "  -x search_level	Following search levels are available [default: %d]:\n"
                 "    %d - score\n"
                 "    %d - score, end location\n"
                 "    %d - score, end and start location and alignment\n",
@@ -108,7 +111,7 @@ int main(int argc, char * const argv[]) {
     vector< vector<unsigned char> >* querySequences = new vector< vector<unsigned char> >();
     vector<string>* queryID = new vector<string>();
     printf("Reading query fasta file...\n");
-    readFastaSequences(queryFile, alphabet, alphabetLength, querySequences, queryID);
+    readFastaSequences(queryFile, alphabet, alphabetLength, querySequences, queryID, revcomp);
     int qLength = queryID->size();
     if (qLength > 1) { maxRes = 1; }
     unsigned char* query;
@@ -137,7 +140,7 @@ int main(int argc, char * const argv[]) {
         printf("\nReading database fasta file...\n");
         // Chunk of database is read and processed (if database is not huge, there will be only one chunk).
         // We do this because if database is huge, it may not fit into memory.
-        wholeDbRead = readFastaSequences(dbFile, alphabet, alphabetLength, dbSequences, dbID);
+        wholeDbRead = readFastaSequences(dbFile, alphabet, alphabetLength, dbSequences, dbID, false);
         int dbLength = dbID->size();
         unsigned char** db = new unsigned char*[dbLength];
         int* dbSeqLengths = new int[dbLength];
@@ -263,7 +266,7 @@ int main(int argc, char * const argv[]) {
  * @param [out] seqs Sequences will be stored here, each sequence as vector of indexes from alphabet.
  * @return true if reached end of file, otherwise false.
  */
-bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength, vector< vector<unsigned char> >* seqs, vector<string>* ids) {
+bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength, vector< vector<unsigned char> >* seqs, vector<string>* ids, bool rc) {
     seqs->clear();
 
     unsigned char letterIdx[128]; //!< letterIdx[c] is index of letter c in alphabet
@@ -273,16 +276,18 @@ bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength
                 letterIdx[j] = i;
             break;
         }
-    for (int i = 0; i < alphabetLength; i++)
+    for (int i = 0; i < alphabetLength; i++) {
         letterIdx[alphabet[i]] = i;
-
+        letterIdx[tolower(alphabet[i])] = i;
+    }
     long numResiduesRead = 0;
     bool inHeader = false;
     bool inSequence = false;
     int buffSize = 4096;
     unsigned char buffer[buffSize];
     string buffID;
-    while (!feof(file)) {
+    int tmpPos;
+    for(;;) {
         int read = fread(buffer, sizeof(char), buffSize, file);
         for (int i = 0; i < read; ++i) {
             unsigned char c = buffer[i];
@@ -296,6 +301,34 @@ bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength
                 }
             } else {
                 if (c == '>') {
+                    if (seqs->size() > 0) {
+                        numResiduesRead += seqs->back().size();
+                        if (rc) {
+            	            seqs->push_back(vector<unsigned char>());
+            	            ids->push_back(ids->back());
+            	            ids->back().push_back(alphabet[23]);
+            	            tmpPos = seqs->size()-2;
+            	            for (int i=(*seqs)[tmpPos].size()-1; i > -1; i--) {
+                                switch((*seqs)[tmpPos][i])
+                                {
+                                case 0:
+                                    seqs->back().push_back(16);break;
+                                case 16:
+                                    seqs->back().push_back(0);break;
+                                case 4:
+                                    seqs->back().push_back(7);break;
+                                case 7:
+                                    seqs->back().push_back(4);break;
+                                default:
+                                    seqs->back().push_back((*seqs)[tmpPos][i]);
+                                }
+            	            }
+                        }
+                        if (numResiduesRead > 1073741824L) {
+                            fseek(file, i - read - 1, SEEK_CUR);
+                            return false;
+                        }
+                    }
                     inHeader = true;
                     inSequence = false;
                 } else {
@@ -305,29 +338,42 @@ bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength
                     // Before that, check if we read more than 1GB of sequences,
                     // and if that is true, finish reading.
                     if (inSequence == false) {
-                        if (seqs->size() > 0) {
-                            numResiduesRead += seqs->back().size();
-                        }
-                        if (numResiduesRead > 1073741824L) {
-                            fseek(file, i - read, SEEK_CUR);
-                            return false;
-                        }
                         inSequence = true;
                         seqs->push_back(vector<unsigned char>());
                     }
-
                     seqs->back().push_back(letterIdx[c]);
                 }
             }
         }
+        if (feof(file)) {
+            if (ids->empty()) {
+                ids->push_back("solo");
+            }
+            if (rc) {
+            	seqs->push_back(vector<unsigned char>());
+            	ids->push_back(ids->back());
+            	ids->back().push_back(alphabet[23]);
+            	for (int i=(*seqs)[seqs->size()-2].size()-1; i > -1; i--) {
+                    switch((*seqs)[seqs->size()-2][i])
+                    {
+                    case 0:
+                        seqs->back().push_back((unsigned char)16);break;
+                    case 16:
+                        seqs->back().push_back((unsigned char)0);break;
+                    case 4:
+                        seqs->back().push_back((unsigned char)7);break;
+                    case 7:
+                        seqs->back().push_back((unsigned char)4);break;
+                    default:
+                        seqs->back().push_back((unsigned char)4);
+                    }
+            	}
+            }
+        	break;
+        }
     }
-    if (ids->empty()) {
-        ids->push_back("solo");
-    }
-
     return true;
 }
-
 
 void printAlignment(const unsigned char* query, const int queryLength,
                     const unsigned char* target, const int targetLength,
