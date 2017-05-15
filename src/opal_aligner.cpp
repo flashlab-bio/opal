@@ -13,6 +13,7 @@
 
 using namespace std;
 
+bool readFastaSequences(unsigned char* seqin, unsigned char* alphabet, int alphabetLength, vector< vector<unsigned char> >* seqs, vector<string>* ids, bool rc);
 bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength, vector< vector<unsigned char> >* seqs, vector<string>* ids, bool rc);
 void printAlignment(const unsigned char* query, const int queryLength,
                     const unsigned char* target, const int targetLength,
@@ -30,10 +31,11 @@ int main(int argc, char * const argv[]) {
     char scoreMatrixFilepath[512];
     bool silent = false;
     bool revcomp = false;
+    bool ispath = false;
     char mode[16] = "SW";
     int searchType = OPAL_SEARCH_SCORE;
     int option;
-    while ((option = getopt(argc, argv, "a:o:e:m:n:f:x:s:r")) >= 0) {
+    while ((option = getopt(argc, argv, "a:o:e:m:n:f:x:srp")) >= 0) {
         switch (option) {
         case 'a': strcpy(mode, optarg); break;
         case 'o': gapOpen = atoi(optarg); break;
@@ -43,12 +45,13 @@ int main(int argc, char * const argv[]) {
         case 'f': scoreMatrixFileGiven = true; strcpy(scoreMatrixFilepath, optarg); break;
         case 's': silent = true; break;
         case 'r': revcomp = true; break;
+        case 'p': ispath = true; break;
         case 'x': searchType = atoi(optarg); break;
         }
     }
     if (optind + 2 != argc) {
         fprintf(stderr, "\n");
-        fprintf(stderr, "Usage: opal_aligner [options...] <query.fasta> <db.fasta>\n");
+        fprintf(stderr, "Usage: opal_aligner [options...] <query> <db>\n");
         fprintf(stderr, "Options:\n");
         fprintf(stderr, "  -g N	N is gap opening penalty. [default: 3]\n");
         fprintf(stderr, "  -e N	N is gap extension penalty. [default: 1]\n"
@@ -58,6 +61,7 @@ int main(int argc, char * const argv[]) {
         fprintf(stderr, "  -f FILE	FILE contains score matrix and some additional data. Overrides -m.\n");
         fprintf(stderr, "  -s	If set, there will be no score output (silent mode).\n");
         fprintf(stderr, "  -r	If set, consider reverse-complement of query(s)\n");
+        fprintf(stderr, "  -p   If set, treat input as path instead of sequences\n");
         fprintf(stderr, "  -a	SW|NW|HW|OV  Alignment mode that will be used. [default: SW]\n");
         fprintf(stderr,
                 "  -x search_level	Following search levels are available [default: %d]:\n"
@@ -102,16 +106,22 @@ int main(int argc, char * const argv[]) {
     printf("Using %s alignment mode.\n", mode);
 
     // Build query
-    char* queryFilepath = argv[optind];
-    FILE* queryFile = fopen(queryFilepath, "r");
-    if (queryFile == 0) {
-        printf("Error: There is no file with name %s\n", queryFilepath);
-        return 1;
-    }
     vector< vector<unsigned char> >* querySequences = new vector< vector<unsigned char> >();
     vector<string>* queryID = new vector<string>();
     printf("Reading query fasta file...\n");
-    readFastaSequences(queryFile, alphabet, alphabetLength, querySequences, queryID, revcomp);
+    FILE* queryFile;
+    if (ispath) {
+        char* queryFilepath = argv[optind];
+        queryFile = fopen(queryFilepath, "r");
+        if (queryFile == 0) {
+            printf("Error: There is no file with name %s\n", queryFilepath);
+            return 1;
+        }
+        readFastaSequences(queryFile, alphabet, alphabetLength, querySequences, queryID, revcomp);
+    }else{
+        readFastaSequences(reinterpret_cast<unsigned char *>(argv[optind]), alphabet, alphabetLength, querySequences, queryID, revcomp);
+    }
+
     int qLength = queryID->size();
     if (qLength > 1) { maxRes = 1; }
     unsigned char* query;
@@ -119,17 +129,19 @@ int main(int argc, char * const argv[]) {
     //unsigned char* query = (*querySequences)[0].data();
     //int queryLength = (*querySequences)[0].size();
     //printf("Read query sequence, %d residues.\n", queryLength);
-    fclose(queryFile);
+    if (ispath) { fclose(queryFile); }
 
 
     // Build db
-    char* dbFilepath = argv[optind+1];
-    FILE* dbFile = fopen(dbFilepath, "r");
-    if (dbFile == 0) {
-        printf("Error: There is no file with name %s\n", dbFilepath);
-        return 1;
+    FILE* dbFile;
+    if (ispath) {
+        char* dbFilepath = argv[optind+1];
+        dbFile = fopen(dbFilepath, "r");
+        if (dbFile == 0) {
+            printf("Error: There is no file with name %s\n", dbFilepath);
+            return 1;
+        }
     }
-
     double cpuTime = 0;
     bool wholeDbRead = false;
     int dbTotalNumResidues = 0;  // Sum of lengths of all database sequences.
@@ -140,7 +152,11 @@ int main(int argc, char * const argv[]) {
         printf("\nReading database fasta file...\n");
         // Chunk of database is read and processed (if database is not huge, there will be only one chunk).
         // We do this because if database is huge, it may not fit into memory.
-        wholeDbRead = readFastaSequences(dbFile, alphabet, alphabetLength, dbSequences, dbID, false);
+        if (ispath) {
+            wholeDbRead = readFastaSequences(dbFile, alphabet, alphabetLength, dbSequences, dbID, false);
+        }else{
+            wholeDbRead = readFastaSequences(reinterpret_cast<unsigned char *>(argv[optind+1]), alphabet, alphabetLength, dbSequences, dbID, false);
+        }
         int dbLength = dbID->size();
         unsigned char** db = new unsigned char*[dbLength];
         int* dbSeqLengths = new int[dbLength];
@@ -249,7 +265,7 @@ int main(int argc, char * const argv[]) {
         printf("\tAverage score: %lf\n", averageScore);
         }*/
 
-    fclose(dbFile);
+    if (ispath) { fclose(dbFile); }
     // Free allocated space
     delete querySequences;
 
@@ -263,6 +279,7 @@ int main(int argc, char * const argv[]) {
  * @param [in] file File pointer to database. It may not be the beginning of database.
  * @param [in] alphabet
  * @param [in] alphabetLength
+ * @param [in] rc
  * @param [out] seqs Sequences will be stored here, each sequence as vector of indexes from alphabet.
  * @return true if reached end of file, otherwise false.
  */
@@ -357,19 +374,113 @@ bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength
                     switch((*seqs)[seqs->size()-2][i])
                     {
                     case 0:
-                        seqs->back().push_back((unsigned char)16);break;
+                        seqs->back().push_back(16);break;
                     case 16:
-                        seqs->back().push_back((unsigned char)0);break;
+                        seqs->back().push_back(0);break;
                     case 4:
-                        seqs->back().push_back((unsigned char)7);break;
+                        seqs->back().push_back(7);break;
                     case 7:
-                        seqs->back().push_back((unsigned char)4);break;
+                        seqs->back().push_back(4);break;
                     default:
-                        seqs->back().push_back((unsigned char)4);
+                        seqs->back().push_back(4);
                     }
             	}
             }
         	break;
+        }
+    }
+    return true;
+}
+
+bool readFastaSequences(unsigned char* seqin, unsigned char* alphabet, int alphabetLength, vector< vector<unsigned char> >* seqs, vector<string>* ids, bool rc) {
+    seqs->clear();
+    unsigned char letterIdx[128]; //!< letterIdx[c] is index of letter c in alphabet
+    for (int i = 0; i < alphabetLength; i++)
+        if (alphabet[i] == '*') { // '*' represents all characters not in alphabet
+            for (int j = 0; j < 128; j++)
+                letterIdx[j] = i;
+            break;
+        }
+    for (int i = 0; i < alphabetLength; i++) {
+        letterIdx[alphabet[i]] = i;
+        letterIdx[tolower(alphabet[i])] = i;
+    }
+    bool inHeader = false;
+    bool inSequence = false;
+    string buffID;
+    int tmpPos;
+    while (*seqin) {
+        if (inHeader) { // I do nothing if in header
+            if (*seqin == '\n') {
+                inHeader = false;
+                ids->push_back(buffID);
+                buffID.clear();
+            } else {
+                buffID += *seqin;
+            }
+        } else {
+            if (*seqin == '>') {
+                if (seqs->size() > 0) {
+                    if (rc) {
+                        seqs->push_back(vector<unsigned char>());
+                        ids->push_back(ids->back());
+                        ids->back().push_back(alphabet[23]);
+                        tmpPos = seqs->size()-2;
+                        for (int i=(*seqs)[tmpPos].size()-1; i > -1; i--) {
+                            switch((*seqs)[tmpPos][i])
+                            {
+                            case 0:
+                                seqs->back().push_back(16);break;
+                            case 16:
+                                seqs->back().push_back(0);break;
+                            case 4:
+                                seqs->back().push_back(7);break;
+                            case 7:
+                                seqs->back().push_back(4);break;
+                            default:
+                                seqs->back().push_back((*seqs)[tmpPos][i]);
+                            }
+                        }
+                    }
+                }
+                inHeader = true;
+                inSequence = false;
+            } else {
+                if (*seqin == '\r' || *seqin == '\n')
+                    continue;
+                // If starting new sequence, initialize it.
+                // Before that, check if we read more than 1GB of sequences,
+                // and if that is true, finish reading.
+                if (inSequence == false) {
+                    inSequence = true;
+                    seqs->push_back(vector<unsigned char>());
+                }
+                seqs->back().push_back(letterIdx[*seqin]);
+            }
+        }
+        ++seqin;
+    }
+    if (ids->empty()) {
+        ids->push_back("solo");
+    }
+    if (rc) {
+        seqs->push_back(vector<unsigned char>());
+        ids->push_back(ids->back());
+        ids->back().push_back(alphabet[23]);
+        for (int i=(*seqs)[seqs->size()-2].size()-1; i > -1; i--) {
+            switch((*seqs)[seqs->size()-2][i])
+            {
+            case 0:
+                seqs->back().push_back((unsigned char)16);break;
+            case 16:
+                seqs->back().push_back((unsigned char)0);break;
+            case 4:
+                seqs->back().push_back((unsigned char)7);break;
+            case 7:
+                seqs->back().push_back((unsigned char)4);break;
+            default:
+                seqs->back().push_back((unsigned char)4);
+            }
         }
     }
     return true;
