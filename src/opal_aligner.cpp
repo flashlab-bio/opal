@@ -5,6 +5,7 @@
 #include <vector>
 #include <ctime>
 #include <string>
+#include <sstream>
 #include <climits>
 #include <numeric>
 #include <algorithm>
@@ -13,62 +14,69 @@
 
 using namespace std;
 
+#define RESET   "\033[0m"
+#define RED     "\033[31m"      /* Red */
+
 bool readFastaSequences(unsigned char* seqin, unsigned char* alphabet, int alphabetLength, vector< vector<unsigned char> >* seqs, vector<string>* ids, bool rc);
 bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength, vector< vector<unsigned char> >* seqs, vector<string>* ids, bool rc);
 void printAlignment(const unsigned char* query, const int queryLength,
                     const unsigned char* target, const int targetLength,
-                    const OpalSearchResult result, const unsigned char* alphabet);
+                    const OpalSearchResult result, const unsigned char* alphabet, const int wrap);
 
 int main(int argc, char * const argv[]) {
     int gapOpen = 3;
     int gapExt = 1;
     int maxRes = 2;
+    int wrap = 50;
     ScoreMatrix scoreMatrix;
 
     //----------------------------- PARSE COMMAND LINE ------------------------//
     string scoreMatrixName = "Blosum50";
     bool scoreMatrixFileGiven = false;
     char scoreMatrixFilepath[512];
-    bool silent = false;
+    bool logging = false;
     bool revcomp = false;
     bool ispath = false;
-    char mode[16] = "SW";
-    int searchType = OPAL_SEARCH_SCORE;
+    int modeCode = OPAL_MODE_SW;
+    int searchType = OPAL_SEARCH_ALIGNMENT;
     int option;
-    while ((option = getopt(argc, argv, "a:o:e:m:n:f:x:srp")) >= 0) {
+    while ((option = getopt(argc, argv, "a:o:e:m:n:w:f:x:hrp")) >= 0) {
         switch (option) {
-        case 'a': strcpy(mode, optarg); break;
+        case 'a': modeCode = atoi(optarg); break;
         case 'o': gapOpen = atoi(optarg); break;
         case 'e': gapExt = atoi(optarg); break;
         case 'n': maxRes = atoi(optarg); break;
+        case 'w': wrap = atoi(optarg); break;
         case 'm': scoreMatrixName = string(optarg); break;
         case 'f': scoreMatrixFileGiven = true; strcpy(scoreMatrixFilepath, optarg); break;
-        case 's': silent = true; break;
+        case 'h': logging = true; break;
         case 'r': revcomp = true; break;
         case 'p': ispath = true; break;
         case 'x': searchType = atoi(optarg); break;
         }
     }
     if (optind + 2 != argc) {
+        if (!logging) return 1;
         fprintf(stderr, "\n");
         fprintf(stderr, "Usage: opal_aligner [options...] <query> <db>\n");
         fprintf(stderr, "Options:\n");
-        fprintf(stderr, "  -g N	N is gap opening penalty. [default: 3]\n");
-        fprintf(stderr, "  -e N	N is gap extension penalty. [default: 1]\n"
+        fprintf(stderr, "  -o NN\tis gap opening penalty. [default: 3]\n");
+        fprintf(stderr, "  -e N\tN is gap extension penalty. [default: 1]\n"
                         "    Gap of length n will have penalty of g + (n - 1) * e.\n");
-        fprintf(stderr, "  -n N	N is max number of result entries\n");
-        fprintf(stderr, "  -m	Blosum50  Score matrix to be used. [default: Blosum50]\n");
-        fprintf(stderr, "  -f FILE	FILE contains score matrix and some additional data. Overrides -m.\n");
-        fprintf(stderr, "  -s	If set, there will be no score output (silent mode).\n");
-        fprintf(stderr, "  -r	If set, consider reverse-complement of query(s)\n");
-        fprintf(stderr, "  -p   If set, treat input as path instead of sequences\n");
-        fprintf(stderr, "  -a	SW|NW|HW|OV  Alignment mode that will be used. [default: SW]\n");
+        fprintf(stderr, "  -n N\tN is max number of result entries.[default: 2]\n");
+        fprintf(stderr, "  -w N\tN is wrap number of alignment view.[default: 50]\n");
+        fprintf(stderr, "  -m F\tScore matrix to be used. [default: Blosum50]\n");
+        fprintf(stderr, "  -f F\tFile contains score matrix and some additional data. Overrides -m.\n");
+        fprintf(stderr, "  -h\tIf set, more info will be output (logging mode).\n");
+        fprintf(stderr, "  -r\tIf set, consider reverse-complement of query(s)\n");
+        fprintf(stderr, "  -p\tIf set, treat input as path instead of sequences\n");
+        fprintf(stderr, "  -a N\tAlignment mode that will be used,SW(3)|NW(0)|HW(1)|OV(2). [default: 0]\n");
         fprintf(stderr,
-                "  -x search_level	Following search levels are available [default: %d]:\n"
-                "    %d - score\n"
-                "    %d - score, end location\n"
-                "    %d - score, end and start location and alignment\n",
-                OPAL_SEARCH_SCORE, OPAL_SEARCH_SCORE, OPAL_SEARCH_SCORE_END, OPAL_SEARCH_ALIGNMENT);
+                "  -x\tsearch_level  Following search levels are available [default: %d]:\n"
+                "    \t              %d - score\n"
+                "    \t              %d - score, end location\n"
+                "    \t              %d - score, end and start location and alignment\n",
+                OPAL_SEARCH_ALIGNMENT, OPAL_SEARCH_SCORE, OPAL_SEARCH_SCORE_END, OPAL_SEARCH_ALIGNMENT);
         return 1;
     }
     //-------------------------------------------------------------------------//
@@ -90,31 +98,22 @@ int main(int argc, char * const argv[]) {
 
 
     // Detect mode
-    int modeCode;
-    if (!strcmp(mode, "SW"))
-        modeCode = OPAL_MODE_SW;
-    else if (!strcmp(mode, "HW"))
-        modeCode = OPAL_MODE_HW;
-    else if (!strcmp(mode, "NW"))
-        modeCode = OPAL_MODE_NW;
-    else if (!strcmp(mode, "OV"))
-        modeCode = OPAL_MODE_OV;
-    else {
-        printf("Invalid mode!\n");
+    if (modeCode<0 || modeCode>3) {
+        fprintf(stderr, "Invalid mode!\n");
         return 1;
     }
-    printf("Using %s alignment mode.\n", mode);
+    if (logging) printf("Using (%d) alignment mode.\n", modeCode);
 
     // Build query
     vector< vector<unsigned char> >* querySequences = new vector< vector<unsigned char> >();
     vector<string>* queryID = new vector<string>();
-    printf("Reading query fasta file...\n");
+    if (logging) printf("Reading query fasta file...\n");
     FILE* queryFile;
     if (ispath) {
         char* queryFilepath = argv[optind];
         queryFile = fopen(queryFilepath, "r");
         if (queryFile == 0) {
-            printf("Error: There is no file with name %s\n", queryFilepath);
+            fprintf(stderr, "Error: There is no file with name %s\n", queryFilepath);
             return 1;
         }
         readFastaSequences(queryFile, alphabet, alphabetLength, querySequences, queryID, revcomp);
@@ -126,9 +125,6 @@ int main(int argc, char * const argv[]) {
     if (qLength > 1) { maxRes = 1; }
     unsigned char* query;
     int queryLength = 0;
-    //unsigned char* query = (*querySequences)[0].data();
-    //int queryLength = (*querySequences)[0].size();
-    //printf("Read query sequence, %d residues.\n", queryLength);
     if (ispath) { fclose(queryFile); }
 
 
@@ -138,7 +134,7 @@ int main(int argc, char * const argv[]) {
         char* dbFilepath = argv[optind+1];
         dbFile = fopen(dbFilepath, "r");
         if (dbFile == 0) {
-            printf("Error: There is no file with name %s\n", dbFilepath);
+            fprintf(stderr, "Error: There is no file with name %s\n", dbFilepath);
             return 1;
         }
     }
@@ -149,7 +145,7 @@ int main(int argc, char * const argv[]) {
     vector<string>* dbID = new vector<string>(); // 
     while (!wholeDbRead) {
         vector< vector<unsigned char> >* dbSequences = new vector< vector<unsigned char> >();
-        printf("\nReading database fasta file...\n");
+        if (logging) printf("\nReading database fasta file...\n");
         // Chunk of database is read and processed (if database is not huge, there will be only one chunk).
         // We do this because if database is huge, it may not fit into memory.
         if (ispath) {
@@ -166,12 +162,12 @@ int main(int argc, char * const argv[]) {
             dbSeqLengths[i] = (*dbSequences)[i].size();
             dbNumResidues += dbSeqLengths[i];
         }
-        printf("Read %d database sequences, %d residues total.\n", dbLength, dbNumResidues);
+        if (logging) printf("Read %d database sequences, %d residues total.\n", dbLength, dbNumResidues);
 
         dbTotalNumResidues += dbNumResidues;
         dbTotalLength += dbLength;
         if (wholeDbRead) {
-            printf("Whole database read: %d database sequences, %d residues in total.\n",
+            if (logging) printf("Whole database read: %d database sequences, %d residues in total.\n",
                    dbTotalLength, dbTotalNumResidues);
         }
 
@@ -179,49 +175,55 @@ int main(int argc, char * const argv[]) {
         clock_t start = clock();
         OpalSearchResult** results = new OpalSearchResult*[dbLength];
         int resultCode;
+        stringstream dumpRes;
         vector<int> idx(dbLength);
         iota(begin(idx), end(idx), 0);
         for (int j = 0; j < qLength; ++j) {
-        	queryLength = (*querySequences)[j].size();
-        	query = (*querySequences)[j].data();
-        	for (int i = 0; i < dbLength; i++) {
-        	    results[i] = new OpalSearchResult;
-        	    opalInitSearchResult(results[i]);
-        	}
-        	printf("\nComparing query to database...");
-        	//fflush(stdout);
-        	resultCode = opalSearchDatabase(query, queryLength, db, dbLength, dbSeqLengths,
-        	                                     gapOpen, gapExt, scoreMatrix.getMatrix(), alphabetLength,
-        	                                     results, searchType, modeCode, OPAL_OVERFLOW_BUCKETS);
-        	if (resultCode) {
-        	    printf("\nDatabase search failed with error code: %d\n", resultCode);
-        	    continue;
-        	}
-        	// Sorting results
-        	sort(begin(idx), end(idx), [&](int i1, int i2) { return results[i1]->score > results[i2]->score; });
-        	// ---------------------------------------------------------------------------- //
+            queryLength = (*querySequences)[j].size();
+            query = (*querySequences)[j].data();
+            for (int i = 0; i < dbLength; i++) {
+                results[i] = new OpalSearchResult;
+                opalInitSearchResult(results[i]);
+            }
+            if (logging) printf("\nComparing query to database...");
+            //fflush(stdout);
+            resultCode = opalSearchDatabase(query, queryLength, db, dbLength, dbSeqLengths,
+                                                 gapOpen, gapExt, scoreMatrix.getMatrix(), alphabetLength,
+                                                 results, searchType, modeCode, OPAL_OVERFLOW_BUCKETS);
+            if (resultCode) {
+                fprintf(stderr, "\nDatabase search failed with error code: %d\n", resultCode);
+                continue;
+            }
+            // Sorting results
+            sort(begin(idx), end(idx), [&](int i1, int i2) { return results[i1]->score > results[i2]->score; });
+            // ---------------------------------------------------------------------------- //
 
-        	if (!silent) {
-        	    printf("\n#<i>: <score> (<query start>, <target start>) (<query end>, <target end>)\n");
-        	    for (int i = 0; i < min(dbLength, maxRes); i++) {
-        	        printf("%s-%s: %d", (*queryID)[j].c_str(), (*dbID)[idx[dbTotalLength - dbLength + i]].c_str(), results[idx[i]]->score);
-        	        if (results[idx[i]]->startLocationQuery >= 0) {
-        	            printf(" (%d, %d)", results[idx[i]]->startLocationQuery, results[idx[i]]->startLocationTarget);
-        	        } else {
-        	            printf(" (?, ?)");
-        	        }
-        	        if (results[idx[i]]->endLocationQuery >= 0) {
-        	            printf(" (%d, %d)", results[idx[i]]->endLocationQuery, results[idx[i]]->endLocationTarget);
-        	        } else {
-        	            printf(" (?, ?)");
-        	        }
-        	        printf("\n");
-        	        if (results[idx[i]]->alignment) {
-        	            printAlignment(query, queryLength, db[idx[i]], dbSeqLengths[idx[i]], *results[idx[i]], alphabet);
-        	        }
-        	    }
-        	}
+            if (logging)
+                printf("\n#<i>: <score> (<query start>, <target start>) (<query end>, <target end>)\n");
+            for (int i = 0; i < min(dbLength, maxRes); i++) {
+                printf("::query: (%d nt)%s::target: (%d nt)%s::score %d", queryLength, (*queryID)[j].c_str(), dbSeqLengths[idx[i]], (*dbID)[idx[dbTotalLength - dbLength + i]].c_str(), results[idx[i]]->score);
+                if (!logging)
+                    dumpRes << j << "\t" << (*queryID)[j] << "\t" << (*dbID)[idx[dbTotalLength - dbLength + i]]
+                            << "\t" << results[idx[i]]->startLocationQuery << "\t" << results[idx[i]]->endLocationQuery
+                            << "\t" << results[idx[i]]->startLocationTarget << "\t" << results[idx[i]]->endLocationTarget
+                            << "\n";
+                if (results[idx[i]]->startLocationQuery >= 0) {
+                    printf(" (%d, %d)", results[idx[i]]->startLocationQuery, results[idx[i]]->startLocationTarget);
+                } else {
+                    printf(" (?, ?)");
+                }
+                if (results[idx[i]]->endLocationQuery >= 0) {
+                    printf(" (%d, %d)", results[idx[i]]->endLocationQuery, results[idx[i]]->endLocationTarget);
+                } else {
+                    printf(" (?, ?)");
+                }
+                printf("\n");
+                if (results[idx[i]]->alignment) {
+                    printAlignment(query, queryLength, db[idx[i]], dbSeqLengths[idx[i]], *results[idx[i]], alphabet, wrap);
+                }
+            }
         }
+        if (!logging) printf("\n%s", dumpRes.str().c_str());
         for (int i = 0; i < dbLength; i++) {
             if (results[i]->alignment) {
                 free(results[i]->alignment);
@@ -232,14 +234,14 @@ int main(int argc, char * const argv[]) {
         delete[] db;
         delete[] dbSeqLengths;
         delete dbSequences;
-    	
-    	clock_t finish = clock();
+
+        clock_t finish = clock();
         cpuTime += ((double)(finish-start))/CLOCKS_PER_SEC;
-    	printf("\nFinished!\n");
+        if (logging) printf("\nFinished!\n");
     }
 
-    printf("\nCpu time of searching: %.5lf\n", cpuTime);
-    if (searchType != OPAL_SEARCH_ALIGNMENT) {
+    if (logging) printf("\nCpu time of searching: %.5lf\n", cpuTime);
+    if (searchType != OPAL_SEARCH_ALIGNMENT && logging) {
         printf("GCUPS (giga cell updates per second): %.5lf\n",
                dbTotalNumResidues / 1000000000.0 * queryLength / cpuTime);
     }
@@ -268,7 +270,7 @@ int main(int argc, char * const argv[]) {
     if (ispath) { fclose(dbFile); }
     // Free allocated space
     delete querySequences;
-
+    fflush(stdout);
     return 0;
 }
 
@@ -321,11 +323,11 @@ bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength
                     if (seqs->size() > 0) {
                         numResiduesRead += seqs->back().size();
                         if (rc) {
-            	            seqs->push_back(vector<unsigned char>());
-            	            ids->push_back(ids->back());
-            	            ids->back().push_back(alphabet[23]);
-            	            tmpPos = seqs->size()-2;
-            	            for (int i=(*seqs)[tmpPos].size()-1; i > -1; i--) {
+                            seqs->push_back(vector<unsigned char>());
+                            ids->push_back(ids->back());
+                            ids->back().push_back(alphabet[23]);
+                            tmpPos = seqs->size()-2;
+                            for (int i=(*seqs)[tmpPos].size()-1; i > -1; i--) {
                                 switch((*seqs)[tmpPos][i])
                                 {
                                 case 0:
@@ -339,7 +341,7 @@ bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength
                                 default:
                                     seqs->back().push_back((*seqs)[tmpPos][i]);
                                 }
-            	            }
+                            }
                         }
                         if (numResiduesRead > 1073741824L) {
                             fseek(file, i - read - 1, SEEK_CUR);
@@ -367,10 +369,10 @@ bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength
                 ids->push_back("solo");
             }
             if (rc) {
-            	seqs->push_back(vector<unsigned char>());
-            	ids->push_back(ids->back());
-            	ids->back().push_back(alphabet[23]);
-            	for (int i=(*seqs)[seqs->size()-2].size()-1; i > -1; i--) {
+                seqs->push_back(vector<unsigned char>());
+                ids->push_back(ids->back());
+                ids->back().push_back(42);
+                for (int i=(*seqs)[seqs->size()-2].size()-1; i > -1; i--) {
                     switch((*seqs)[seqs->size()-2][i])
                     {
                     case 0:
@@ -384,9 +386,9 @@ bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength
                     default:
                         seqs->back().push_back(4);
                     }
-            	}
+                }
             }
-        	break;
+            break;
         }
     }
     return true;
@@ -446,8 +448,10 @@ bool readFastaSequences(unsigned char* seqin, unsigned char* alphabet, int alpha
                 inHeader = true;
                 inSequence = false;
             } else {
-                if (*seqin == '\r' || *seqin == '\n')
+                if (*seqin == '\r' || *seqin == '\n') {
+                    ++seqin;
                     continue;
+                }
                 // If starting new sequence, initialize it.
                 // Before that, check if we read more than 1GB of sequences,
                 // and if that is true, finish reading.
@@ -488,7 +492,7 @@ bool readFastaSequences(unsigned char* seqin, unsigned char* alphabet, int alpha
 
 void printAlignment(const unsigned char* query, const int queryLength,
                     const unsigned char* target, const int targetLength,
-                    const OpalSearchResult result, const unsigned char* alphabet) {
+                    const OpalSearchResult result, const unsigned char* alphabet, const int wrap) {
     int tIdx = result.startLocationTarget;
     int qIdx = result.startLocationQuery;
     /* What is this for?
@@ -500,13 +504,15 @@ void printAlignment(const unsigned char* query, const int queryLength,
         }
       }
     */
-    for (int start = 0; start < result.alignmentLength; start += 50) {
+    for (int start = 0; start < result.alignmentLength; start += wrap) {
         // target
         printf("T: ");
         int startTIdx = tIdx;
-        for (int j = start; j < start + 50 && j < result.alignmentLength; j++) {
+        for (int j = start; j < start + wrap && j < result.alignmentLength; j++) {
             if (result.alignment[j] == OPAL_ALIGN_DEL)
-                printf("_");
+                printf("-");
+            else if (result.alignment[j] == OPAL_ALIGN_MISMATCH)
+                printf(RED "%c" RESET, alphabet[target[tIdx++]]);
             else
                 printf("%c", alphabet[target[tIdx++]]);
         }
@@ -514,9 +520,11 @@ void printAlignment(const unsigned char* query, const int queryLength,
         // query
         printf("Q: ");
         int startQIdx = qIdx;
-        for (int j = start; j < start + 50 && j < result.alignmentLength; j++) {
+        for (int j = start; j < start + wrap && j < result.alignmentLength; j++) {
             if (result.alignment[j] == OPAL_ALIGN_INS)
-                printf("_");
+                printf("-");
+            else if (result.alignment[j] == OPAL_ALIGN_MISMATCH)
+                printf(RED "%c" RESET, alphabet[query[qIdx++]]);
             else
                 printf("%c", alphabet[query[qIdx++]]);
         }
