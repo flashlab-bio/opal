@@ -54,6 +54,11 @@ vector<unsigned char> ScoreMatrix::getBlosumAlphabet() {
     return vector<unsigned char>(alphabet, alphabet+24);
 }
 
+vector<unsigned char> ScoreMatrix::getBaseAlphabet() {
+    unsigned char alphabet[4] = {'A', 'T', 'C', 'G'};
+    return vector<unsigned char>(alphabet, alphabet+4);
+}
+
 ScoreMatrix ScoreMatrix::getBlosum50() {
     int matrix[24 * 24] = {
          5, -2, -1, -2, -1, -1, -1,  0, -2, -1, -2, -1, -1, -3, -1,  1,  0, -3, -2,  0, -2, -1, -1, -5,
@@ -82,4 +87,14 @@ ScoreMatrix ScoreMatrix::getBlosum50() {
         -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5,  1
     };
     return ScoreMatrix(ScoreMatrix::getBlosumAlphabet(), vector<int>(matrix, matrix + 24 * 24));
+}
+
+ScoreMatrix ScoreMatrix::getBase50() {
+    int matrix[4 * 4] = {
+    2, -1, -3, 0,
+    -1, 4, -5, -1,
+    -3, -5, 1, -10,
+    0, -1, -10, 4
+};
+    return ScoreMatrix(ScoreMatrix::getBaseAlphabet(), vector<int>(matrix, matrix + 4 * 4));
 }

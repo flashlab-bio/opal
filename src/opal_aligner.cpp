@@ -31,7 +31,7 @@ int main(int argc, char * const argv[]) {
     ScoreMatrix scoreMatrix;
 
     //----------------------------- PARSE COMMAND LINE ------------------------//
-    string scoreMatrixName = "Blosum50";
+    string scoreMatrixName = "Base50";
     bool scoreMatrixFileGiven = false;
     char scoreMatrixFilepath[512];
     bool logging = false;
@@ -65,7 +65,7 @@ int main(int argc, char * const argv[]) {
                         "    Gap of length n will have penalty of g + (n - 1) * e.\n");
         fprintf(stderr, "  -n N\tN is max number of result entries.[default: 2]\n");
         fprintf(stderr, "  -w N\tN is wrap number of alignment view.[default: 50]\n");
-        fprintf(stderr, "  -m F\tScore matrix to be used. [default: Blosum50]\n");
+        fprintf(stderr, "  -m F\tScore matrix to be used, such as Blosum50. [default: Base50]\n");
         fprintf(stderr, "  -f F\tFile contains score matrix and some additional data. Overrides -m.\n");
         fprintf(stderr, "  -h\tIf set, more info will be output (logging mode).\n");
         fprintf(stderr, "  -r\tIf set, consider reverse-complement of query(s)\n");
@@ -82,15 +82,19 @@ int main(int argc, char * const argv[]) {
     //-------------------------------------------------------------------------//
 
     // Set score matrix by name
-    if (scoreMatrixName == "Blosum50")
+    if (scoreMatrixName == "Base50")
+        scoreMatrix = ScoreMatrix::getBase50();
+    else if(scoreMatrixName == "Blosum50"){
         scoreMatrix = ScoreMatrix::getBlosum50();
-    else {
+        revcomp = false;
+    }else {
         fprintf(stderr, "Given score matrix name is not valid\n");
         exit(1);
     }
     // Set score matrix by filepath
     if (scoreMatrixFileGiven) {
         scoreMatrix = ScoreMatrix(scoreMatrixFilepath);
+        revcomp = false;
     }
 
     unsigned char* alphabet = scoreMatrix.getAlphabet();
@@ -201,7 +205,7 @@ int main(int argc, char * const argv[]) {
             if (logging)
                 printf("\n#<i>: <score> (<query start>, <target start>) (<query end>, <target end>)\n");
             for (int i = 0; i < min(dbLength, maxRes); i++) {
-                printf("::query: (%d nt)%s::target: (%d nt)%s::score %d", queryLength, (*queryID)[j].c_str(), dbSeqLengths[idx[i]], (*dbID)[idx[dbTotalLength - dbLength + i]].c_str(), results[idx[i]]->score);
+                printf("::query(%d nt): %s::target(%d nt): %s::score %d", queryLength, (*queryID)[j].c_str(), dbSeqLengths[idx[i]], (*dbID)[idx[dbTotalLength - dbLength + i]].c_str(), results[idx[i]]->score);
                 if (!logging)
                     dumpRes << j << "\t" << (*queryID)[j] << "\t" << (*dbID)[idx[dbTotalLength - dbLength + i]]
                             << "\t" << results[idx[i]]->startLocationQuery << "\t" << results[idx[i]]->endLocationQuery
@@ -325,19 +329,19 @@ bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength
                         if (rc) {
                             seqs->push_back(vector<unsigned char>());
                             ids->push_back(ids->back());
-                            ids->back().push_back(alphabet[23]);
+                            ids->back().push_back(42);
                             tmpPos = seqs->size()-2;
                             for (int i=(*seqs)[tmpPos].size()-1; i > -1; i--) {
                                 switch((*seqs)[tmpPos][i])
                                 {
                                 case 0:
-                                    seqs->back().push_back(16);break;
-                                case 16:
+                                    seqs->back().push_back(1);break;
+                                case 1:
                                     seqs->back().push_back(0);break;
-                                case 4:
-                                    seqs->back().push_back(7);break;
-                                case 7:
-                                    seqs->back().push_back(4);break;
+                                case 2:
+                                    seqs->back().push_back(3);break;
+                                case 3:
+                                    seqs->back().push_back(2);break;
                                 default:
                                     seqs->back().push_back((*seqs)[tmpPos][i]);
                                 }
@@ -375,16 +379,16 @@ bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength
                 for (int i=(*seqs)[seqs->size()-2].size()-1; i > -1; i--) {
                     switch((*seqs)[seqs->size()-2][i])
                     {
-                    case 0:
-                        seqs->back().push_back(16);break;
-                    case 16:
-                        seqs->back().push_back(0);break;
-                    case 4:
-                        seqs->back().push_back(7);break;
-                    case 7:
-                        seqs->back().push_back(4);break;
+                        case 0:
+                            seqs->back().push_back(1);break;
+                        case 1:
+                            seqs->back().push_back(0);break;
+                        case 2:
+                            seqs->back().push_back(3);break;
+                        case 3:
+                            seqs->back().push_back(2);break;
                     default:
-                        seqs->back().push_back(4);
+                        seqs->back().push_back((*seqs)[seqs->size()-2][i]);
                     }
                 }
             }
@@ -426,19 +430,19 @@ bool readFastaSequences(unsigned char* seqin, unsigned char* alphabet, int alpha
                     if (rc) {
                         seqs->push_back(vector<unsigned char>());
                         ids->push_back(ids->back());
-                        ids->back().push_back(alphabet[23]);
+                        ids->back().push_back(42);
                         tmpPos = seqs->size()-2;
                         for (int i=(*seqs)[tmpPos].size()-1; i > -1; i--) {
                             switch((*seqs)[tmpPos][i])
                             {
                             case 0:
-                                seqs->back().push_back(16);break;
-                            case 16:
+                                seqs->back().push_back(1);break;
+                            case 1:
                                 seqs->back().push_back(0);break;
-                            case 4:
-                                seqs->back().push_back(7);break;
-                            case 7:
-                                seqs->back().push_back(4);break;
+                            case 2:
+                                seqs->back().push_back(3);break;
+                            case 3:
+                                seqs->back().push_back(2);break;
                             default:
                                 seqs->back().push_back((*seqs)[tmpPos][i]);
                             }
@@ -470,20 +474,20 @@ bool readFastaSequences(unsigned char* seqin, unsigned char* alphabet, int alpha
     if (rc) {
         seqs->push_back(vector<unsigned char>());
         ids->push_back(ids->back());
-        ids->back().push_back(alphabet[23]);
+        ids->back().push_back(42);
         for (int i=(*seqs)[seqs->size()-2].size()-1; i > -1; i--) {
             switch((*seqs)[seqs->size()-2][i])
             {
-            case 0:
-                seqs->back().push_back((unsigned char)16);break;
-            case 16:
-                seqs->back().push_back((unsigned char)0);break;
-            case 4:
-                seqs->back().push_back((unsigned char)7);break;
-            case 7:
-                seqs->back().push_back((unsigned char)4);break;
+                case 0:
+                    seqs->back().push_back(1);break;
+                case 1:
+                    seqs->back().push_back(0);break;
+                case 2:
+                    seqs->back().push_back(3);break;
+                case 3:
+                    seqs->back().push_back(2);break;
             default:
-                seqs->back().push_back((unsigned char)4);
+                seqs->back().push_back((*seqs)[seqs->size()-2][i]);
             }
         }
     }

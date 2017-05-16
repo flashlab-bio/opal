@@ -25,9 +25,11 @@ class ScoreMatrix {
     int* getMatrix();
 
     static ScoreMatrix getBlosum50();
+    static ScoreMatrix getBase50();
 
  private:
     static vector<unsigned char> getBlosumAlphabet();
+    static vector<unsigned char> getBaseAlphabet();
 };
 
 #endif // SCORE_MATRIX_HPP
