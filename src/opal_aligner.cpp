@@ -14,8 +14,11 @@
 
 using namespace std;
 
-#define RESET   "\033[0m"
-#define RED     "\033[31m"      /* Red */
+#define DER   "\033[39m"        /* Reset color */
+#define RED   "\033[31m"        /* Red */
+#define UND   "\033[4m"         /* Underline */
+#define DNU   "\033[24m"        /* Reset Underline */
+
 
 bool readFastaSequences(unsigned char* seqin, unsigned char* alphabet, int alphabetLength, vector< vector<unsigned char> >* seqs, vector<string>* ids, bool rc);
 bool readFastaSequences(FILE* &file, unsigned char* alphabet, int alphabetLength, vector< vector<unsigned char> >* seqs, vector<string>* ids, bool rc);
@@ -28,10 +31,10 @@ int main(int argc, char * const argv[]) {
     int gapExt = 1;
     int maxRes = 2;
     int wrap = 50;
+    int type = 0;
     ScoreMatrix scoreMatrix;
 
     //----------------------------- PARSE COMMAND LINE ------------------------//
-    string scoreMatrixName = "Base50";
     bool scoreMatrixFileGiven = false;
     char scoreMatrixFilepath[512];
     bool logging = false;
@@ -40,15 +43,15 @@ int main(int argc, char * const argv[]) {
     int modeCode = OPAL_MODE_SW;
     int searchType = OPAL_SEARCH_ALIGNMENT;
     int option;
-    while ((option = getopt(argc, argv, "a:o:e:m:n:w:f:x:hrp")) >= 0) {
+    while ((option = getopt(argc, argv, "a:o:e:t:n:w:m:x:hrp")) >= 0) {
         switch (option) {
         case 'a': modeCode = atoi(optarg); break;
         case 'o': gapOpen = atoi(optarg); break;
         case 'e': gapExt = atoi(optarg); break;
         case 'n': maxRes = atoi(optarg); break;
         case 'w': wrap = atoi(optarg); break;
-        case 'm': scoreMatrixName = string(optarg); break;
-        case 'f': scoreMatrixFileGiven = true; strcpy(scoreMatrixFilepath, optarg); break;
+        case 't': type = atoi(optarg); break;
+        case 'm': scoreMatrixFileGiven = true; strcpy(scoreMatrixFilepath, optarg); break;
         case 'h': logging = true; break;
         case 'r': revcomp = true; break;
         case 'p': ispath = true; break;
@@ -65,8 +68,8 @@ int main(int argc, char * const argv[]) {
                         "    Gap of length n will have penalty of g + (n - 1) * e.\n");
         fprintf(stderr, "  -n N\tN is max number of result entries.[default: 2]\n");
         fprintf(stderr, "  -w N\tN is wrap number of alignment view.[default: 50]\n");
-        fprintf(stderr, "  -m F\tScore matrix to be used, such as Blosum50. [default: Base50]\n");
-        fprintf(stderr, "  -f F\tFile contains score matrix and some additional data. Overrides -m.\n");
+        fprintf(stderr, "  -t M\tSequence type, could be DNA(0) or Protein(1). [default: 0]\n");
+        fprintf(stderr, "  -m F\tFile contains score matrix and some additional data.\n");
         fprintf(stderr, "  -h\tIf set, more info will be output (logging mode).\n");
         fprintf(stderr, "  -r\tIf set, consider reverse-complement of query(s)\n");
         fprintf(stderr, "  -p\tIf set, treat input as path instead of sequences\n");
@@ -81,21 +84,19 @@ int main(int argc, char * const argv[]) {
     }
     //-------------------------------------------------------------------------//
 
-    // Set score matrix by name
-    if (scoreMatrixName == "Base50")
+    // Set score matrix
+    if (scoreMatrixFileGiven)
+        scoreMatrix = ScoreMatrix(scoreMatrixFilepath);
+    else if (type == 0)
         scoreMatrix = ScoreMatrix::getBase50();
-    else if(scoreMatrixName == "Blosum50"){
+    else if (type == 1)
         scoreMatrix = ScoreMatrix::getBlosum50();
-        revcomp = false;
-    }else {
+    else {
         fprintf(stderr, "Given score matrix name is not valid\n");
         exit(1);
     }
-    // Set score matrix by filepath
-    if (scoreMatrixFileGiven) {
-        scoreMatrix = ScoreMatrix(scoreMatrixFilepath);
+    if (type != 0)
         revcomp = false;
-    }
 
     unsigned char* alphabet = scoreMatrix.getAlphabet();
     int alphabetLength = scoreMatrix.getAlphabetLength();
@@ -205,12 +206,12 @@ int main(int argc, char * const argv[]) {
             if (logging)
                 printf("\n#<i>: <score> (<query start>, <target start>) (<query end>, <target end>)\n");
             for (int i = 0; i < min(dbLength, maxRes); i++) {
+                printf(UND "%d\n" DNU, max(i,j));
                 printf("::query(%d nt): %s::target(%d nt): %s::score %d", queryLength, (*queryID)[j].c_str(), dbSeqLengths[idx[i]], (*dbID)[idx[dbTotalLength - dbLength + i]].c_str(), results[idx[i]]->score);
                 if (!logging)
-                    dumpRes << j << "\t" << (*queryID)[j] << "\t" << (*dbID)[idx[dbTotalLength - dbLength + i]]
+                    dumpRes << "\n" << (*queryID)[j] << "\t" << (*dbID)[idx[dbTotalLength - dbLength + i]]
                             << "\t" << results[idx[i]]->startLocationQuery << "\t" << results[idx[i]]->endLocationQuery
-                            << "\t" << results[idx[i]]->startLocationTarget << "\t" << results[idx[i]]->endLocationTarget
-                            << "\n";
+                            << "\t" << results[idx[i]]->startLocationTarget << "\t" << results[idx[i]]->endLocationTarget;
                 if (results[idx[i]]->startLocationQuery >= 0) {
                     printf(" (%d, %d)", results[idx[i]]->startLocationQuery, results[idx[i]]->startLocationTarget);
                 } else {
@@ -227,7 +228,7 @@ int main(int argc, char * const argv[]) {
                 }
             }
         }
-        if (!logging) printf("\n%s", dumpRes.str().c_str());
+        if (!logging) printf("%s", dumpRes.str().c_str());
         for (int i = 0; i < dbLength; i++) {
             if (results[i]->alignment) {
                 free(results[i]->alignment);
@@ -516,7 +517,7 @@ void printAlignment(const unsigned char* query, const int queryLength,
             if (result.alignment[j] == OPAL_ALIGN_DEL)
                 printf("-");
             else if (result.alignment[j] == OPAL_ALIGN_MISMATCH)
-                printf(RED "%c" RESET, alphabet[target[tIdx++]]);
+                printf(RED "%c" DER, alphabet[target[tIdx++]]);
             else
                 printf("%c", alphabet[target[tIdx++]]);
         }
@@ -528,10 +529,10 @@ void printAlignment(const unsigned char* query, const int queryLength,
             if (result.alignment[j] == OPAL_ALIGN_INS)
                 printf("-");
             else if (result.alignment[j] == OPAL_ALIGN_MISMATCH)
-                printf(RED "%c" RESET, alphabet[query[qIdx++]]);
+                printf(RED "%c" DER, alphabet[query[qIdx++]]);
             else
                 printf("%c", alphabet[query[qIdx++]]);
         }
-        printf(" (%d - %d)\n\n", max(startQIdx, 0), qIdx - 1);
+        printf(" (%d - %d)\n", max(startQIdx, 0), qIdx - 1);
     }
 }

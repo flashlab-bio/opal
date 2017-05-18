@@ -15,7 +15,9 @@ ScoreMatrix::ScoreMatrix(vector<unsigned char> alphabet, vector<int> matrix) {
 }
 
 ScoreMatrix::ScoreMatrix(const char* filepath) {
-    ifstream file(filepath);
+    ifstream ff(filepath);
+    istringstream ss(filepath);
+    istream& file = ff ? static_cast<std::istream&>(ff) : ss;
     string line;
 
     // Read alphabet
