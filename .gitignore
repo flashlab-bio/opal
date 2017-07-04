@@ -11,6 +11,6 @@
 *.lai
 *.la
 *.a
-test_data/*
+/test_data/*
 src/test
 src/opal_aligner

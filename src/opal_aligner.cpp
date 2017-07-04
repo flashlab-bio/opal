@@ -32,6 +32,7 @@ int main(int argc, char * const argv[]) {
     int maxRes = 2;
     int wrap = 50;
     int type = 0;
+    int matchExt = 0;
     ScoreMatrix scoreMatrix;
 
     //----------------------------- PARSE COMMAND LINE ------------------------//
@@ -43,7 +44,7 @@ int main(int argc, char * const argv[]) {
     int modeCode = OPAL_MODE_SW;
     int searchType = OPAL_SEARCH_ALIGNMENT;
     int option;
-    while ((option = getopt(argc, argv, "a:o:e:t:n:w:m:x:hrp")) >= 0) {
+    while ((option = getopt(argc, argv, "a:o:e:b:t:n:w:m:x:hrp")) >= 0) {
         switch (option) {
         case 'a': modeCode = atoi(optarg); break;
         case 'o': gapOpen = atoi(optarg); break;
@@ -55,6 +56,7 @@ int main(int argc, char * const argv[]) {
         case 'h': logging = true; break;
         case 'r': revcomp = true; break;
         case 'p': ispath = true; break;
+        case 'b': matchExt = atoi(optarg); break;
         case 'x': searchType = atoi(optarg); break;
         }
     }
@@ -74,6 +76,8 @@ int main(int argc, char * const argv[]) {
         fprintf(stderr, "  -r\tIf set, consider reverse-complement of query(s)\n");
         fprintf(stderr, "  -p\tIf set, treat input as path instead of sequences\n");
         fprintf(stderr, "  -a N\tAlignment mode that will be used,SW(3)|NW(0)|HW(1)|OV(2). [default: 0]\n");
+        fprintf(stderr, "  -b N\tN is match extension bonus. [default: 0]\n"
+                        "    This bonus is awarded to match following another match.\n");
         fprintf(stderr,
                 "  -x\tsearch_level  Following search levels are available [default: %d]:\n"
                 "    \t              %d - score\n"
@@ -193,7 +197,7 @@ int main(int argc, char * const argv[]) {
             if (logging) printf("\nComparing query to database...");
             //fflush(stdout);
             resultCode = opalSearchDatabase(query, queryLength, db, dbLength, dbSeqLengths,
-                                                 gapOpen, gapExt, scoreMatrix.getMatrix(), alphabetLength,
+                                                 gapOpen, gapExt, matchExt, scoreMatrix.getMatrix(), alphabetLength,
                                                  results, searchType, modeCode, OPAL_OVERFLOW_BUCKETS);
             if (resultCode) {
                 fprintf(stderr, "\nDatabase search failed with error code: %d\n", resultCode);
