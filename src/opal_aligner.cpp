@@ -27,37 +27,43 @@ void printAlignment(const unsigned char* query, const int queryLength,
                     const OpalSearchResult result, const unsigned char* alphabet, const int wrap);
 
 int main(int argc, char * const argv[]) {
+    int matchScore = 0;
+    int mismatchScore = 0;
     int gapOpen = 3;
     int gapExt = 1;
     int maxRes = 2;
     int wrap = 50;
-    int type = 0;
     int matchExt = 0;
     ScoreMatrix scoreMatrix;
 
     //----------------------------- PARSE COMMAND LINE ------------------------//
-    bool scoreMatrixFileGiven = false;
-    char scoreMatrixFilepath[512];
+    char matrixPattern[512];
     bool logging = false;
     bool revcomp = false;
     bool ispath = false;
     int modeCode = OPAL_MODE_SW;
     int searchType = OPAL_SEARCH_ALIGNMENT;
     int option;
-    while ((option = getopt(argc, argv, "a:o:e:b:t:n:w:m:x:hrp")) >= 0) {
+    int matrixType = 0;
+    while ((option = getopt(argc, argv, "a:o:e:b:n:w:m:x:hrp")) >= 0) {
         switch (option) {
         case 'a': modeCode = atoi(optarg); break;
         case 'o': gapOpen = atoi(optarg); break;
         case 'e': gapExt = atoi(optarg); break;
+        case 'b': matchExt = atoi(optarg); break;
         case 'n': maxRes = atoi(optarg); break;
         case 'w': wrap = atoi(optarg); break;
-        case 't': type = atoi(optarg); break;
-        case 'm': scoreMatrixFileGiven = true; strcpy(scoreMatrixFilepath, optarg); break;
+        case 'm': switch (optarg[0]){
+                    case '@': matrixType=1; break;
+                    case ':': matrixType=2; break;
+                    case 'n': matrixType=3; break;
+                    case 'p': matrixType=4; break;
+                  }
+                  strcpy(matrixPattern, optarg+1); break;
+        case 'x': searchType = atoi(optarg); break;
         case 'h': logging = true; break;
         case 'r': revcomp = true; break;
         case 'p': ispath = true; break;
-        case 'b': matchExt = atoi(optarg); break;
-        case 'x': searchType = atoi(optarg); break;
         }
     }
     if (optind + 2 != argc) {
@@ -67,15 +73,13 @@ int main(int argc, char * const argv[]) {
         fprintf(stderr, "Options:\n");
         fprintf(stderr, "  -o NN\tis gap opening penalty. [default: 3]\n");
         fprintf(stderr, "  -e N\tN is gap extension penalty. [default: 1]\n"
-                        "    Gap of length n will have penalty of g + (n - 1) * e.\n");
+                        "     Gap of length n will have penalty of g + (n - 1) * e.\n");
         fprintf(stderr, "  -n N\tN is max number of result entries.[default: 2]\n");
         fprintf(stderr, "  -w N\tN is wrap number of alignment view.[default: 50]\n");
-        fprintf(stderr, "  -t M\tSequence type, could be DNA(0) or Protein(1). [default: 0]\n");
-        fprintf(stderr, "  -m F\tFile contains score matrix and some additional data.\n");
         fprintf(stderr, "  -h\tIf set, more info will be output (logging mode).\n");
         fprintf(stderr, "  -r\tIf set, consider reverse-complement of query(s)\n");
         fprintf(stderr, "  -p\tIf set, treat input as path instead of sequences\n");
-        fprintf(stderr, "  -a N\tAlignment mode that will be used,SW(3)|NW(0)|HW(1)|OV(2). [default: 0]\n");
+        fprintf(stderr, "  -a N\tAlignment mode that will be used,SW(3)|NW(0)|HW(1)|OV(2). [default: 3]\n");
         fprintf(stderr, "  -b N\tN is match extension bonus. [default: 0]\n"
                         "    This bonus is awarded to match following another match.\n");
         fprintf(stderr,
@@ -84,27 +88,34 @@ int main(int argc, char * const argv[]) {
                 "    \t              %d - score, end location\n"
                 "    \t              %d - score, end and start location and alignment\n",
                 OPAL_SEARCH_ALIGNMENT, OPAL_SEARCH_SCORE, OPAL_SEARCH_SCORE_END, OPAL_SEARCH_ALIGNMENT);
+        fprintf(stderr,
+                "  -m\tpattern       Score matrix pattern. [default: n]:\n"
+                "    \t              n       - nucleotide\n"
+                "    \t              p       - protein\n"
+                "    \t              @{path} - matrix filepath\n"
+                "    \t              :{N[N]} - match score and mismatch score(optional)\n");
         return 1;
     }
     //-------------------------------------------------------------------------//
 
     // Set score matrix
-    if (scoreMatrixFileGiven)
-        scoreMatrix = ScoreMatrix(scoreMatrixFilepath);
-    else if (type == 0)
-        scoreMatrix = ScoreMatrix::getBase50();
-    else if (type == 1)
-        scoreMatrix = ScoreMatrix::getBlosum50();
-    else {
-        fprintf(stderr, "Given score matrix name is not valid\n");
-        exit(1);
+    switch (matrixType){
+        case 1: scoreMatrix = ScoreMatrix(matrixPattern); break;
+        case 2: matchScore = matrixPattern[0] - 48;
+                mismatchScore = matchScore;
+                if (strlen(matrixPattern)>1) mismatchScore = matrixPattern[1] - 48;
+                scoreMatrix = ScoreMatrix(matchScore, mismatchScore); break;
+        case 3: case 0: scoreMatrix = ScoreMatrix::getBase50(); break;
+        case 4: scoreMatrix = ScoreMatrix::getBlosum50(); break;
     }
-    if (type != 0)
-        revcomp = false;
 
     unsigned char* alphabet = scoreMatrix.getAlphabet();
     int alphabetLength = scoreMatrix.getAlphabetLength();
-
+    int matrixLength = scoreMatrix.getMatrixLength();
+    if (alphabetLength == 0 || matrixLength != alphabetLength * alphabetLength) {
+        fprintf(stderr, "Invalid matrix!\n");
+        return 1;
+    }
 
     // Detect mode
     if (modeCode<0 || modeCode>3) {

@@ -19,9 +19,10 @@ class ScoreMatrix {
      *  - each next line is one row of matrix (integers separated with spaces).
      */
     ScoreMatrix(const char* filepath);
-
+    ScoreMatrix(const int match_score, const int mismatch_penalty);
     int getAlphabetLength();
     unsigned char* getAlphabet();
+    int getMatrixLength();
     int* getMatrix();
 
     static ScoreMatrix getBlosum50();
